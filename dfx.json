@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "canisters": {
+    "rakeoff_achievements_backend": {
+      "type": "motoko",
+      "main": "src/rakeoff_achievements_backend/main.mo"
+    },
+    "rakeoff_achievements_frontend": {
+      "type": "assets",
+      "source": [
+        "src/rakeoff_achievements_frontend/assets"
+      ],
+      "dependencies": [
+        "rakeoff_achievements_backend"
+      ]
+    }
+  },
+  "defaults": {
+    "build": {
+      "packtool": "",
+      "args": ""
+    }
+  },
+  "output_env_file": ".env"
+}
