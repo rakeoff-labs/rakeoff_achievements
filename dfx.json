@@ -1,23 +1,14 @@
 {
   "version": 1,
   "canisters": {
-    "rakeoff_achievements_backend": {
+    "RakeoffAchievements": {
       "type": "motoko",
-      "main": "src/rakeoff_achievements_backend/main.mo"
-    },
-    "rakeoff_achievements_frontend": {
-      "type": "assets",
-      "source": [
-        "src/rakeoff_achievements_frontend/assets"
-      ],
-      "dependencies": [
-        "rakeoff_achievements_backend"
-      ]
+      "main": "src/achievements.mo"
     }
   },
   "defaults": {
     "build": {
-      "packtool": "",
+      "packtool": "vessel sources",
       "args": ""
     }
   },
