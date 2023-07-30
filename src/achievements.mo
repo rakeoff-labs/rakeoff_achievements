@@ -1,4 +1,5 @@
 import IcpLedgerInterface "./ledger_interface/ledger";
+import GovernanceInterface "./governance_interface/governance";
 import IcpAccountTools "./ledger_interface/account";
 import Principal "mo:base/Principal";
 import Blob "mo:base/Blob";
@@ -22,6 +23,9 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
   // ICP ledger canister
   let IcpLedger = actor "ryjl3-tyaaa-aaaaa-aaaba-cai" : IcpLedgerInterface.Self;
 
+  // ICP governance canister
+  let Governance = actor "rrkah-fqaaa-aaaaa-aaaaq-cai" : GovernanceInterface.Self;
+
   // The standard ICP transaction fee
   let ICP_PROTOCOL_FEE : Nat64 = 10_000;
 
@@ -43,10 +47,30 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
     return await getCanisterAccounts(caller);
   };
 
+  public shared ({ caller }) func verify_caller_owns_neuron(neuronId : Nat64) : async Result.Result<GovernanceInterface.Neuron, GovernanceInterface.GovernanceError> {
+    // rejects unless is added as a hotkey
+    return await verifyCallerOwnsNeuron(caller, neuronId);
+  };
+
   ////////////////////////
   // Private Functions ///
   ////////////////////////
 
+  private func verifyCallerOwnsNeuron(caller: Principal, neuronId : Nat64) : async Result.Result<GovernanceInterface.Neuron, GovernanceInterface.GovernanceError> {
+    let dataResult = await Governance.get_full_neuron(neuronId);
+    
+    // should return a bool of owned or not
+    switch (dataResult) {
+      case (#Ok result) {
+        #ok(result);
+      };
+      case (#Err result) {
+        return #err(result);
+      };
+    };
+  };
+
+  // ICP wallet functions:
   private func getCanisterIcpAddress() : [Nat8] {
     let ownerAccount = Principal.fromActor(thisCanister);
     let subAccount = IcpAccountTools.defaultSubaccount();
@@ -83,5 +107,5 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
       };
     });
   };
-  
+
 };
