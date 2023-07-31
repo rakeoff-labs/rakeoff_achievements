@@ -8,9 +8,13 @@ import Hex "mo:encoding/Hex";
 import Nat64 "mo:base/Nat64";
 import Int "mo:base/Int";
 import Time "mo:base/Time";
+import HashMap "mo:base/HashMap";
+import Hash "mo:base/Hash";
+import Text "mo:base/Text";
+import Iter "mo:base/Iter";
 
-// Welcome to the Rakeoff Achievements smart contract
-// This smart contract must be made HotKey of the neuron used.
+// Welcome to the RakeoffAchievements smart contract
+// This smart contract must be made HotKey to fetch neurons data.
 // A hotkey has access to a neurons full data.
 // A hotkey can only vote, make proposals and change the following of a neuron.
 
@@ -29,13 +33,55 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
   // The standard ICP transaction fee
   let ICP_PROTOCOL_FEE : Nat64 = 10_000;
 
+  // Achievement levels (amount of ICP e8s needed in neuron)
+  let ACHIEVEMENTS_LEVEL_1 : Nat64 = 100000000; // 1 ICP
+
+  let ACHIEVEMENTS_LEVEL_2 : Nat64 = 1000000000; // 10 ICP
+
+  let ACHIEVEMENTS_LEVEL_3 : Nat64 = 10000000000; // 100 ICP
+
   /////////////
   // Types ////
   /////////////
 
+  public type AchievementLevel = Nat64;
+
   public type CanisterAccount = {
     icp_address : Text;
     icp_balance : Nat64;
+    icp_claimed : Nat64;
+  };
+
+  //////////////////////
+  // Canister State ////
+  //////////////////////
+
+  private stable var _icpClaimed : Nat64 = 0;
+
+  private func nat64Hash(x : Nat64) : Hash.Hash {
+    Text.hash(Nat64.toText(x));
+  };
+
+  private var _neuronLevel = HashMap.HashMap<Nat64, AchievementLevel>(
+    10,
+    Nat64.equal,
+    nat64Hash,
+  );
+
+  // Maintain hashmap state
+  private stable var _neuronLevelStorage : [(Nat64, AchievementLevel)] = [];
+
+  system func preupgrade() {
+    _neuronLevelStorage := Iter.toArray(_neuronLevel.entries());
+  };
+
+  system func postupgrade() {
+    _neuronLevel := HashMap.fromIter(
+      Iter.fromArray(_neuronLevelStorage),
+      _neuronLevelStorage.size(),
+      Nat64.equal,
+      nat64Hash,
+    );
   };
 
   ////////////////////////
@@ -47,25 +93,61 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
     return await getCanisterAccounts(caller);
   };
 
-  public shared ({ caller }) func verify_caller_owns_neuron(neuronId : Nat64) : async Result.Result<GovernanceInterface.Neuron, GovernanceInterface.GovernanceError> {
-    // rejects unless is added as a hotkey
-    return await verifyCallerOwnsNeuron(caller, neuronId);
-  };
-
   ////////////////////////
   // Private Functions ///
   ////////////////////////
 
-  private func verifyCallerOwnsNeuron(caller: Principal, neuronId : Nat64) : async Result.Result<GovernanceInterface.Neuron, GovernanceInterface.GovernanceError> {
+  private func claimAchievementLevelReward(caller : Principal, neuronId : Nat64) : async Result.Result<Text, Text> {
+    // verify owner:
+    let isOwner = await verifyCallerOwnsNeuron(caller, neuronId);
+
+    switch(isOwner){
+      case(#ok result){
+        // check achievement level
+      };
+      case(#err result){
+        return #err(result)
+      }
+    }
+  };
+
+  private func verifyCallerOwnsNeuron(caller : Principal, neuronId : Nat64) : async Result.Result<Bool, Text> {
     let dataResult = await Governance.get_full_neuron(neuronId);
-    
-    // should return a bool of owned or not
+
     switch (dataResult) {
       case (#Ok result) {
-        #ok(result);
+        switch (result.controller) {
+          case (?controller) {
+            return #ok(Principal.equal(controller, caller));
+          };
+          case (null) {
+            return #err("Failed to get neuron controller");
+          };
+        };
       };
       case (#Err result) {
-        return #err(result);
+        return #err("Failed to get neuron data");
+      };
+    };
+  };
+
+  private func verifyNeuronAchievementLevel(neuronId : Nat64) : async Result.Result<Nat64, Text> {
+    let dataResult = await Governance.get_full_neuron(neuronId);
+
+    switch (dataResult) {
+      case (#Ok result) {
+        if (result.cached_neuron_stake_e8s >= ACHIEVEMENTS_LEVEL_3) {
+          return #ok(ACHIEVEMENTS_LEVEL_3);
+        } else if (result.cached_neuron_stake_e8s >= ACHIEVEMENTS_LEVEL_2) {
+          return #ok(ACHIEVEMENTS_LEVEL_2);
+        } else if (result.cached_neuron_stake_e8s >= ACHIEVEMENTS_LEVEL_1) {
+          return #ok(ACHIEVEMENTS_LEVEL_1);
+        } else {
+          return #err("Neuron failed to match an achievement level");
+        };
+      };
+      case (#Err result) {
+        return #err("Failed to get neuron data");
       };
     };
   };
@@ -92,6 +174,7 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
     return #ok({
       icp_address = Hex.encode(getCanisterIcpAddress());
       icp_balance = canisterIcpBalance;
+      icp_claimed = _icpClaimed;
     });
   };
 
