@@ -109,13 +109,13 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
     return await getCanisterAccounts(caller);
   };
 
-  public shared ({caller}) func testing(neuronId: Nat64) : async Result.Result<Text, Text> {
-    return await claimAchievementLevelReward(caller, neuronId)
+  public shared ({ caller }) func testing(neuronId : Nat64) : async Result.Result<Text, Text> {
+    return await claimAchievementLevelReward(caller, neuronId);
   };
 
-  ////////////////////////
-  // Private Functions ///
-  ////////////////////////
+  ////////////////////////////////////
+  // Private Achievement Functions ///
+  ////////////////////////////////////
 
   // TODO
   // need a quick query call function to check if NeuronID in hashmap also to check the level in the hashmap and see if the nueron is due a reward from a new level, this is for the UI (IE reward available)
@@ -126,10 +126,13 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
     switch (neuronDataResult) {
       case (#Ok neuronData) {
         let isOwner = verifyCallerOwnsNeuron(caller, neuronData);
-
-        if (isOwner == false) {
-          // break clause
+        if (not isOwner) {
           return #err("Caller does not own this neuron");
+        };
+
+        let isStaking = verifyNeuronIsStaking(neuronData);
+        if (not isStaking) {
+          return #err("Neuron needs to be locked and hit minimum lockup threshold");
         };
 
         let oldLevel = _neuronAchievementLevel.get(neuronId);
@@ -138,7 +141,6 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
         let rewardsDue = verifyIcpRewardsDue(oldLevel, newLevel);
 
         if (rewardsDue > 0) {
-          // disburse rewards
           let transferResult = await canisterTransferIcp(neuronData.account, rewardsDue);
           switch (transferResult) {
             case (#Ok result) {
@@ -158,6 +160,10 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
       };
     };
   };
+
+  ////////////////////////////////////
+  // Private Verification Functions ///
+  ////////////////////////////////////
 
   private func verifyCallerOwnsNeuron(caller : Principal, neuronData : GovernanceInterface.Neuron) : Bool {
     switch (neuronData.controller) {
@@ -203,7 +209,27 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
     };
   };
 
-  // ICP wallet functions:
+  private func verifyNeuronIsStaking(neuronData : GovernanceInterface.Neuron) : Bool {
+    let dissolveState = neuronData.dissolve_state;
+    let minimumSecondsNeeded : Nat64 = 15_813_200; // minimum of 6 months
+
+    switch (dissolveState) {
+      case (? #DissolveDelaySeconds(value)) {
+        return value >= minimumSecondsNeeded;
+      };
+      case (? #WhenDissolvedTimestampSeconds(_)) {
+        return false;
+      };
+      case null {
+        return false;
+      };
+    };
+  };
+
+  ///////////////////////////////////
+  // Private ICP wallet Functions ///
+  ///////////////////////////////////
+
   private func getCanisterIcpAddress() : [Nat8] {
     let ownerAccount = Principal.fromActor(thisCanister);
     let subAccount = IcpAccountTools.defaultSubaccount();
