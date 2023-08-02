@@ -68,6 +68,15 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
     icp_claimed : Nat64;
   };
 
+  public type NeuronAcheivementLevel = {
+    neuron_id : Nat64;
+    current_level : AchievementLevel;
+    cached_level : ?AchievementLevel; // checks the canister state
+    reward_is_due : Bool;
+    reward_amount_due : Nat64;
+    canister_rewards_available : Bool;
+  };
+
   //////////////////////
   // Canister State ////
   //////////////////////
@@ -109,7 +118,13 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
     return await getCanisterAccounts(caller);
   };
 
-  public shared ({ caller }) func testing(neuronId : Nat64) : async Result.Result<Text, Text> {
+  public shared ({ caller }) func check_achievement_level_reward(neuronId : Nat64) : async Result.Result<NeuronAcheivementLevel, Text> {
+    assert (Principal.isAnonymous(caller) == false);
+    return await checkAcheivementLevelReward(neuronId);
+  };
+
+  public shared ({ caller }) func claim_achievement_level_reward(neuronId : Nat64) : async Result.Result<Text, Text> {
+    assert (Principal.isAnonymous(caller) == false);
     return await claimAchievementLevelReward(caller, neuronId);
   };
 
@@ -117,42 +132,71 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
   // Private Achievement Functions ///
   ////////////////////////////////////
 
-  // TODO
-  // need a quick query call function to check if NeuronID in hashmap also to check the level in the hashmap and see if the nueron is due a reward from a new level, this is for the UI (IE reward available)
-
-  private func claimAchievementLevelReward(caller : Principal, neuronId : Nat64) : async Result.Result<Text, Text> {
-    let neuronDataResult = await Governance.get_full_neuron(neuronId);
+  private func checkAcheivementLevelReward(neuronId : Nat64) : async Result.Result<NeuronAcheivementLevel, Text> {
+    let neuronDataResult = await Governance.get_neuron_info(neuronId);
+    let canisterIcpBalance = await getCanisterIcpBalance();
 
     switch (neuronDataResult) {
       case (#Ok neuronData) {
-        let isOwner = verifyCallerOwnsNeuron(caller, neuronData);
+        let oldLevel = _neuronAchievementLevel.get(neuronId);
+        let newLevel = verifyNeuronAchievementLevel(neuronData.stake_e8s);
+        let rewardsDue = verifyIcpRewardsDue(oldLevel, newLevel);
+
+        return #ok({
+          neuron_id = neuronId;
+          current_level = newLevel;
+          cached_level = oldLevel;
+          reward_is_due = rewardsDue > 0;
+          reward_amount_due = rewardsDue;
+          canister_rewards_available = canisterIcpBalance > (rewardsDue + ICP_PROTOCOL_FEE);
+        });
+      };
+      case (#Err result) {
+        return #err("Could not fetch neuron data");
+      };
+    };
+  };
+
+  // For this to work this canister must be made a hotkey
+  private func claimAchievementLevelReward(caller : Principal, neuronId : Nat64) : async Result.Result<Text, Text> {
+    let neuronDataResult = await Governance.get_full_neuron(neuronId);
+    let canisterIcpBalance = await getCanisterIcpBalance();
+
+    switch (neuronDataResult) {
+      case (#Ok neuronData) {
+        let isOwner = verifyCallerOwnsNeuron(caller, neuronData.controller);
         if (not isOwner) {
           return #err("Caller does not own this neuron");
         };
 
-        let isStaking = verifyNeuronIsStaking(neuronData);
+        let isStaking = verifyNeuronIsStaking(neuronData.dissolve_state);
         if (not isStaking) {
           return #err("Neuron needs to be locked and hit minimum lockup threshold");
         };
 
         let oldLevel = _neuronAchievementLevel.get(neuronId);
-        let newLevel = verifyNeuronAchievementLevel(neuronData);
+        let newLevel = verifyNeuronAchievementLevel(neuronData.cached_neuron_stake_e8s);
 
         let rewardsDue = verifyIcpRewardsDue(oldLevel, newLevel);
 
-        if (rewardsDue > 0) {
-          let transferResult = await canisterTransferIcp(neuronData.account, rewardsDue);
-          switch (transferResult) {
-            case (#Ok result) {
-              _neuronAchievementLevel.put(neuronId, newLevel);
-              return #ok("Reward successfully disbursed");
-            };
-            case (#Err result) {
-              #err("Failed to transfer rewards, please try again");
-            };
-          };
-        } else {
+        if (rewardsDue <= 0) {
           return #err("Neuron is not due any rewards");
+        };
+
+        if (canisterIcpBalance <= (rewardsDue + ICP_PROTOCOL_FEE)) {
+          return #err("Canister has insufficient funds");
+        };
+
+        let transferResult = await canisterTransferIcp(neuronData.account, (rewardsDue + ICP_PROTOCOL_FEE));
+        switch (transferResult) {
+          case (#Ok result) {
+            _neuronAchievementLevel.put(neuronId, newLevel);
+            _icpClaimed += (rewardsDue + ICP_PROTOCOL_FEE);
+            return #ok("Reward successfully disbursed");
+          };
+          case (#Err result) {
+            return #err("Failed to transfer rewards, please try again");
+          };
         };
       };
       case (#Err result) {
@@ -165,8 +209,8 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
   // Private Verification Functions ///
   ////////////////////////////////////
 
-  private func verifyCallerOwnsNeuron(caller : Principal, neuronData : GovernanceInterface.Neuron) : Bool {
-    switch (neuronData.controller) {
+  private func verifyCallerOwnsNeuron(caller : Principal, neuronController : ?Principal) : Bool {
+    switch (neuronController) {
       case (?controller) {
         return Principal.equal(controller, caller);
       };
@@ -176,10 +220,10 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
     };
   };
 
-  private func verifyNeuronAchievementLevel(neuronData : GovernanceInterface.Neuron) : AchievementLevel {
-    if (neuronData.cached_neuron_stake_e8s >= LEVEL_3.icp_amount_needed) {
+  private func verifyNeuronAchievementLevel(neuronStake : Nat64) : AchievementLevel {
+    if (neuronStake >= LEVEL_3.icp_amount_needed) {
       return LEVEL_3;
-    } else if (neuronData.cached_neuron_stake_e8s >= LEVEL_2.icp_amount_needed) {
+    } else if (neuronStake >= LEVEL_2.icp_amount_needed) {
       return LEVEL_2;
     } else {
       return LEVEL_1; // always atleast level 1
@@ -209,8 +253,7 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
     };
   };
 
-  private func verifyNeuronIsStaking(neuronData : GovernanceInterface.Neuron) : Bool {
-    let dissolveState = neuronData.dissolve_state;
+  private func verifyNeuronIsStaking(dissolveState : ?GovernanceInterface.DissolveState) : Bool {
     let minimumSecondsNeeded : Nat64 = 15_813_200; // minimum of 6 months
 
     switch (dissolveState) {
@@ -267,5 +310,4 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
       };
     });
   };
-
 };
