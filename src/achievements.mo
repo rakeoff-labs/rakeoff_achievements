@@ -12,11 +12,11 @@ import HashMap "mo:base/HashMap";
 import Hash "mo:base/Hash";
 import Text "mo:base/Text";
 import Iter "mo:base/Iter";
+import Option "mo:base/Option";
 
 // Welcome to the RakeoffAchievements smart contract
-// This smart contract must be made HotKey to fetch neurons data.
-// A hotkey has access to a neurons full data.
-// A hotkey can only vote, make proposals and change the following of a neuron.
+// This smart contract must be made HotKey to fetch a neurons data.
+// A hotkey can ONLY fetch data, vote, make proposals and change the following of a neuron.
 
 shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
 
@@ -32,6 +32,9 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
 
   // The standard ICP transaction fee
   let ICP_PROTOCOL_FEE : Nat64 = 10_000;
+
+  // Max ICP amount to be claimed by one user
+  let MAX_AMOUNT_PER_USER : Nat64 = 600000000; // 6 ICP
 
   // Achievement levels
   let LEVEL_1 : AchievementLevel = {
@@ -81,23 +84,28 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
   // Canister State ////
   //////////////////////
 
-  private stable var _icpClaimed : Nat64 = 0;
+  private stable var _TotalIcpClaimed : Nat64 = 0;
+
+  // temporary memory - to avoid double spend attack
+  private var _ongoingRewardTransfers = HashMap.HashMap<Principal, Nat64>(10, Principal.equal, Principal.hash);
+
+  // stable storage to track how much ICP a user has claimed
+  private var _userIcpClaimed = HashMap.HashMap<Principal, Nat64>(10, Principal.equal, Principal.hash);
 
   private func nat64Hash(x : Nat64) : Hash.Hash {
     Text.hash(Nat64.toText(x));
   };
 
-  private var _neuronAchievementLevel = HashMap.HashMap<Nat64, AchievementLevel>(
-    10,
-    Nat64.equal,
-    nat64Hash,
-  );
+  // stable storage to track the neurons achievements levels
+  private var _neuronAchievementLevel = HashMap.HashMap<Nat64, AchievementLevel>(10, Nat64.equal, nat64Hash);
 
-  // Maintain hashmap state
+  // Maintain stable hashmap state
   private stable var _neuronLevelStorage : [(Nat64, AchievementLevel)] = [];
+  private stable var _userIcpClaimedStorage : [(Principal, Nat64)] = [];
 
   system func preupgrade() {
     _neuronLevelStorage := Iter.toArray(_neuronAchievementLevel.entries());
+    _userIcpClaimedStorage := Iter.toArray(_userIcpClaimed.entries());
   };
 
   system func postupgrade() {
@@ -107,15 +115,22 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
       Nat64.equal,
       nat64Hash,
     );
+
+    _userIcpClaimed := HashMap.fromIter(
+      Iter.fromArray(_userIcpClaimedStorage),
+      _userIcpClaimedStorage.size(),
+      Principal.equal,
+      Principal.hash,
+    );
   };
 
   ////////////////////////
   // Public Functions ////
   ////////////////////////
 
-  public shared ({ caller }) func get_canister_accounts() : async Result.Result<CanisterAccount, Text> {
+  public shared ({ caller }) func get_canister_account() : async Result.Result<CanisterAccount, Text> {
     assert (caller == owner);
-    return await getCanisterAccounts(caller);
+    return await getCanisterAccount(caller);
   };
 
   public shared ({ caller }) func check_achievement_level_reward(neuronId : Nat64) : async Result.Result<NeuronAcheivementLevel, Text> {
@@ -142,6 +157,7 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
         let newLevel = verifyNeuronAchievementLevel(neuronData.stake_e8s);
         let rewardsDue = verifyIcpRewardsDue(oldLevel, newLevel);
 
+        // needs another check to see if user has any claims left
         return #ok({
           neuron_id = neuronId;
           current_level = newLevel;
@@ -157,7 +173,6 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
     };
   };
 
-  // For this to work this canister must be made a hotkey
   private func claimAchievementLevelReward(caller : Principal, neuronId : Nat64) : async Result.Result<Text, Text> {
     let neuronDataResult = await Governance.get_full_neuron(neuronId);
     let canisterIcpBalance = await getCanisterIcpBalance();
@@ -187,14 +202,24 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
           return #err("Canister has insufficient funds");
         };
 
+        // double spend prevention
+        if (Option.isSome(_ongoingRewardTransfers.get(caller))) {
+          return #err("Claim already in progress");
+        };
+
+        _ongoingRewardTransfers.put(caller, neuronId);
         let transferResult = await canisterTransferIcp(neuronData.account, (rewardsDue + ICP_PROTOCOL_FEE));
         switch (transferResult) {
           case (#Ok result) {
+            ignore _ongoingRewardTransfers.remove(caller);
+
             _neuronAchievementLevel.put(neuronId, newLevel);
-            _icpClaimed += (rewardsDue + ICP_PROTOCOL_FEE);
+            _TotalIcpClaimed += (rewardsDue + ICP_PROTOCOL_FEE);
             return #ok("Reward successfully disbursed");
           };
           case (#Err result) {
+            ignore _ongoingRewardTransfers.remove(caller);
+
             return #err("Failed to transfer rewards, please try again");
           };
         };
@@ -288,13 +313,13 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
     return balance.e8s;
   };
 
-  private func getCanisterAccounts(caller : Principal) : async Result.Result<CanisterAccount, Text> {
+  private func getCanisterAccount(caller : Principal) : async Result.Result<CanisterAccount, Text> {
     let canisterIcpBalance = await getCanisterIcpBalance();
 
     return #ok({
       icp_address = Hex.encode(getCanisterIcpAddress());
       icp_balance = canisterIcpBalance;
-      icp_claimed = _icpClaimed;
+      icp_claimed = _TotalIcpClaimed;
     });
   };
 
