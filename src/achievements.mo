@@ -33,9 +33,6 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
   // The standard ICP transaction fee
   let ICP_PROTOCOL_FEE : Nat64 = 10_000;
 
-  // Max ICP amount to be claimed by one user
-  let MAX_AMOUNT_PER_USER : Nat64 = 600000000; // 6 ICP
-
   // Achievement levels
   let LEVEL_1 : AchievementLevel = {
     level_id = 1;
@@ -69,13 +66,14 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
     icp_address : Text;
     icp_balance : Nat64;
     icp_claimed : Nat64;
+    ongoing_transfers : [(Principal, Nat64)];
   };
 
   public type NeuronAcheivementLevel = {
     neuron_id : Nat64;
     current_level : AchievementLevel;
     cached_level : ?AchievementLevel; // checks the canister state
-    reward_is_due : Bool;
+    neuron_passes_checks : Bool;
     reward_amount_due : Nat64;
     canister_rewards_available : Bool;
   };
@@ -89,9 +87,6 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
   // temporary memory - to avoid double spend attack
   private var _ongoingRewardTransfers = HashMap.HashMap<Principal, Nat64>(10, Principal.equal, Principal.hash);
 
-  // stable storage to track how much ICP a user has claimed
-  private var _userIcpClaimed = HashMap.HashMap<Principal, Nat64>(10, Principal.equal, Principal.hash);
-
   private func nat64Hash(x : Nat64) : Hash.Hash {
     Text.hash(Nat64.toText(x));
   };
@@ -101,11 +96,9 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
 
   // Maintain stable hashmap state
   private stable var _neuronLevelStorage : [(Nat64, AchievementLevel)] = [];
-  private stable var _userIcpClaimedStorage : [(Principal, Nat64)] = [];
 
   system func preupgrade() {
     _neuronLevelStorage := Iter.toArray(_neuronAchievementLevel.entries());
-    _userIcpClaimedStorage := Iter.toArray(_userIcpClaimed.entries());
   };
 
   system func postupgrade() {
@@ -115,20 +108,14 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
       Nat64.equal,
       nat64Hash,
     );
-
-    _userIcpClaimed := HashMap.fromIter(
-      Iter.fromArray(_userIcpClaimedStorage),
-      _userIcpClaimedStorage.size(),
-      Principal.equal,
-      Principal.hash,
-    );
   };
 
   ////////////////////////
   // Public Functions ////
   ////////////////////////
 
-  public shared ({ caller }) func get_canister_account() : async Result.Result<CanisterAccount, Text> {
+  // need to add more stats
+  public shared ({ caller }) func get_canister_account_and_stats() : async Result.Result<CanisterAccount, Text> {
     assert (caller == owner);
     return await getCanisterAccount(caller);
   };
@@ -148,8 +135,11 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
   ////////////////////////////////////
 
   private func checkAcheivementLevelReward(neuronId : Nat64) : async Result.Result<NeuronAcheivementLevel, Text> {
+    // use get_neuron_info so this can called without adding the canister as a hotkey
     let neuronDataResult = await Governance.get_neuron_info(neuronId);
     let canisterIcpBalance = await getCanisterIcpBalance();
+    let minimumNeuronLockupNeeded : Nat64 = 15_813_200;
+    let minimumNeuronAgeNeeded : Nat64 = 1_209_600;
 
     switch (neuronDataResult) {
       case (#Ok neuronData) {
@@ -157,12 +147,11 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
         let newLevel = verifyNeuronAchievementLevel(neuronData.stake_e8s);
         let rewardsDue = verifyIcpRewardsDue(oldLevel, newLevel);
 
-        // needs another check to see if user has any claims left
         return #ok({
           neuron_id = neuronId;
           current_level = newLevel;
           cached_level = oldLevel;
-          reward_is_due = rewardsDue > 0;
+          neuron_passes_checks = (neuronData.age_seconds > minimumNeuronAgeNeeded) and (neuronData.dissolve_delay_seconds >= minimumNeuronLockupNeeded);
           reward_amount_due = rewardsDue;
           canister_rewards_available = canisterIcpBalance > (rewardsDue + ICP_PROTOCOL_FEE);
         });
@@ -174,41 +163,42 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
   };
 
   private func claimAchievementLevelReward(caller : Principal, neuronId : Nat64) : async Result.Result<Text, Text> {
+    // initiate message 1 to fetch neuron data
     let neuronDataResult = await Governance.get_full_neuron(neuronId);
-    let canisterIcpBalance = await getCanisterIcpBalance();
 
+    // initiate message 2 to transfer ICP reward
     switch (neuronDataResult) {
       case (#Ok neuronData) {
-        let isOwner = verifyCallerOwnsNeuron(caller, neuronData.controller);
-        if (not isOwner) {
+        // perform our validations
+        if (not verifyCallerOwnsNeuron(caller, neuronData.controller)) {
           return #err("Caller does not own this neuron");
         };
 
-        let isStaking = verifyNeuronIsStaking(neuronData.dissolve_state);
-        if (not isStaking) {
-          return #err("Neuron needs to be locked and hit minimum lockup threshold");
+        if (not verifyNeuronIsStaking(neuronData.dissolve_state)) {
+          return #err("Neuron needs to be locked and hit the minimum dissolve delay threshold");
+        };
+
+        if (not verifyNeuronAge(neuronData.aging_since_timestamp_seconds)) {
+          return #err("Neuron needs to hit the minimum age threshold of 2 weeks");
         };
 
         let oldLevel = _neuronAchievementLevel.get(neuronId);
         let newLevel = verifyNeuronAchievementLevel(neuronData.cached_neuron_stake_e8s);
-
         let rewardsDue = verifyIcpRewardsDue(oldLevel, newLevel);
 
         if (rewardsDue <= 0) {
           return #err("Neuron is not due any rewards");
         };
 
-        if (canisterIcpBalance <= (rewardsDue + ICP_PROTOCOL_FEE)) {
-          return #err("Canister has insufficient funds");
-        };
-
         // double spend prevention
         if (Option.isSome(_ongoingRewardTransfers.get(caller))) {
-          return #err("Claim already in progress");
+          return #err("Reward transfer already in progress");
         };
-
         _ongoingRewardTransfers.put(caller, neuronId);
-        let transferResult = await canisterTransferIcp(neuronData.account, (rewardsDue + ICP_PROTOCOL_FEE));
+
+        let transferResult = await canisterTransferIcp(getNeuronIcpAccount(neuronData.account), (rewardsDue + ICP_PROTOCOL_FEE));
+
+        // initiate message 3
         switch (transferResult) {
           case (#Ok result) {
             ignore _ongoingRewardTransfers.remove(caller);
@@ -294,6 +284,22 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
     };
   };
 
+  private func verifyNeuronAge(age : Nat64) : Bool {
+    // age can be a very large number if dissolving
+    // unlocked neurons also accumulate age
+    // see https://github.com/dfinity/ic/blob/c04abf0b0be433961d45f2daa5f1c5c12228dfdf/rs/nns/governance/src/neuron.rs#L431
+    let now = Nat64.fromNat(Int.abs(Time.now() / 1_000_000_000));
+    let minimumSecondsNeeded : Nat64 = 1_209_600; // minimum of 2 weeks
+
+    if (age > now) {
+      return false;
+    } else if ((now - age) > minimumSecondsNeeded) {
+      return true;
+    } else {
+      return false;
+    };
+  };
+
   ///////////////////////////////////
   // Private ICP wallet Functions ///
   ///////////////////////////////////
@@ -303,6 +309,13 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
     let subAccount = IcpAccountTools.defaultSubaccount();
 
     return Blob.toArray(IcpAccountTools.accountIdentifier(ownerAccount, subAccount));
+  };
+
+  private func getNeuronIcpAccount(account : [Nat8]) : [Nat8] {
+    let govPrincipal = Principal.fromText("rrkah-fqaaa-aaaaa-aaaaq-cai");
+    let icpAccount = IcpAccountTools.accountIdentifier(govPrincipal, Blob.fromArray(account));
+
+    return Blob.toArray(icpAccount);
   };
 
   private func getCanisterIcpBalance() : async Nat64 {
@@ -320,6 +333,7 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
       icp_address = Hex.encode(getCanisterIcpAddress());
       icp_balance = canisterIcpBalance;
       icp_claimed = _TotalIcpClaimed;
+      ongoing_transfers = Iter.toArray<(Principal, Nat64)>(_ongoingRewardTransfers.entries());
     });
   };
 
