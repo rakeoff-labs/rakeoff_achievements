@@ -14,8 +14,8 @@ import Text "mo:base/Text";
 import Iter "mo:base/Iter";
 import Option "mo:base/Option";
 
-// Welcome to the RakeoffAchievements smart contract
-// This smart contract must be made HotKey to fetch a neurons data.
+// Welcome to the RakeoffAchievements smart contract.
+// This smart contract must be made HotKey to disburse an achievement reward.
 // A hotkey can ONLY fetch data, vote, make proposals and change the following of a neuron.
 
 shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
@@ -33,23 +33,38 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
   // The standard ICP transaction fee
   let ICP_PROTOCOL_FEE : Nat64 = 10_000;
 
+  // ICP values are denominated in e8s, so 1 ICP is 100,000,000 e8s
+  let TOTAL_ICP_REWARD : Nat64 = 100_000_000; // 1 ICP
+
   // Achievement levels
   let LEVEL_1 : AchievementLevel = {
     level_id = 1;
-    icp_amount_needed = 100000000; // 1 ICP
-    icp_reward = 100000000; // 1 ICP
+    icp_amount_needed = 100_000_000; // 1 ICP
+    icp_reward = TOTAL_ICP_REWARD / 20; // 0.05 ICP
   };
 
   let LEVEL_2 : AchievementLevel = {
     level_id = 2;
-    icp_amount_needed = 1000000000; // 10 ICP
-    icp_reward = 100000000; // 1 ICP
+    icp_amount_needed = 1_000_000_000; // 10 ICP
+    icp_reward = TOTAL_ICP_REWARD / 10; // 0.1 ICP
   };
 
   let LEVEL_3 : AchievementLevel = {
     level_id = 3;
-    icp_amount_needed = 10000000000; // 100 ICP
-    icp_reward = 100000000; // 1 ICP
+    icp_amount_needed = 2_500_000_000; // 25 ICP
+    icp_reward = TOTAL_ICP_REWARD / 10; // 0.1 ICP
+  };
+
+  let LEVEL_4 : AchievementLevel = {
+    level_id = 4;
+    icp_amount_needed = 5_000_000_000; // 50 ICP
+    icp_reward = TOTAL_ICP_REWARD / 4; // 0.25 ICP
+  };
+
+  let LEVEL_5 : AchievementLevel = {
+    level_id = 5;
+    icp_amount_needed = 10_000_000_000; // 100 ICP
+    icp_reward = TOTAL_ICP_REWARD / 2; // 0.5 ICP
   };
 
   /////////////
@@ -69,7 +84,7 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
     ongoing_transfers : [(Principal, Nat64)];
   };
 
-  public type NeuronAcheivementLevel = {
+  public type NeuronAchievementDetails = {
     neuron_id : Nat64;
     current_level : AchievementLevel;
     cached_level : ?AchievementLevel; // checks the canister state
@@ -114,13 +129,12 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
   // Public Functions ////
   ////////////////////////
 
-  // need to add more stats
   public shared ({ caller }) func get_canister_account_and_stats() : async Result.Result<CanisterAccount, Text> {
     assert (caller == owner);
     return await getCanisterAccount(caller);
   };
 
-  public shared ({ caller }) func check_achievement_level_reward(neuronId : Nat64) : async Result.Result<NeuronAcheivementLevel, Text> {
+  public shared ({ caller }) func check_achievement_level_reward(neuronId : Nat64) : async Result.Result<NeuronAchievementDetails, Text> {
     assert (Principal.isAnonymous(caller) == false);
     return await checkAcheivementLevelReward(neuronId);
   };
@@ -130,92 +144,103 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
     return await claimAchievementLevelReward(caller, neuronId);
   };
 
+  public shared query ({ caller }) func show_available_levels() : async [AchievementLevel] {
+    assert (Principal.isAnonymous(caller) == false);
+    return [LEVEL_1, LEVEL_2, LEVEL_3, LEVEL_4, LEVEL_5];
+  };
+
   ////////////////////////////////////
   // Private Achievement Functions ///
   ////////////////////////////////////
 
-  private func checkAcheivementLevelReward(neuronId : Nat64) : async Result.Result<NeuronAcheivementLevel, Text> {
-    // use get_neuron_info so this can called without adding the canister as a hotkey
-    let neuronDataResult = await Governance.get_neuron_info(neuronId);
+  private func checkAcheivementLevelReward(neuronId : Nat64) : async Result.Result<NeuronAchievementDetails, Text> {
     let canisterIcpBalance = await getCanisterIcpBalance();
-    let minimumNeuronLockupNeeded : Nat64 = 15_813_200;
-    let minimumNeuronAgeNeeded : Nat64 = 1_209_600;
+    let neuronDataResult = await Governance.list_neurons({
+      neuron_ids = [neuronId];
+      include_neurons_readable_by_caller = false;
+    });
 
-    switch (neuronDataResult) {
-      case (#Ok neuronData) {
-        let oldLevel = _neuronAchievementLevel.get(neuronId);
-        let newLevel = verifyNeuronAchievementLevel(neuronData.stake_e8s);
-        let rewardsDue = verifyIcpRewardsDue(oldLevel, newLevel);
-
-        return #ok({
-          neuron_id = neuronId;
-          current_level = newLevel;
-          cached_level = oldLevel;
-          neuron_passes_checks = (neuronData.age_seconds > minimumNeuronAgeNeeded) and (neuronData.dissolve_delay_seconds >= minimumNeuronLockupNeeded);
-          reward_amount_due = rewardsDue;
-          canister_rewards_available = canisterIcpBalance > (rewardsDue + ICP_PROTOCOL_FEE);
-        });
-      };
-      case (#Err result) {
-        return #err("Could not fetch neuron data");
-      };
+    if (neuronDataResult.neuron_infos.size() == 0) {
+      return #err("No neuron info available for the given neuron ID");
     };
+
+    let neuronInfo = neuronDataResult.neuron_infos[0].1;
+
+    let oldLevel = _neuronAchievementLevel.get(neuronId);
+    let newLevel = verifyNeuronAchievementLevel(neuronInfo.stake_e8s);
+    let rewardsDue = verifyIcpRewardsDue(oldLevel, newLevel);
+
+    return #ok({
+      neuron_id = neuronId;
+      current_level = newLevel;
+      cached_level = oldLevel;
+      neuron_passes_checks = verifyNeuronAge(neuronInfo.age_seconds) and verifyNeuronIsStaking(neuronInfo.state, neuronInfo.dissolve_delay_seconds);
+      reward_amount_due = rewardsDue;
+      canister_rewards_available = canisterIcpBalance > (rewardsDue + ICP_PROTOCOL_FEE);
+    });
   };
 
   private func claimAchievementLevelReward(caller : Principal, neuronId : Nat64) : async Result.Result<Text, Text> {
     // initiate message 1 to fetch neuron data
-    let neuronDataResult = await Governance.get_full_neuron(neuronId);
+    let neuronDataResult = await Governance.list_neurons({
+      neuron_ids = [neuronId];
+      include_neurons_readable_by_caller = false;
+    });
 
-    // initiate message 2 to transfer ICP reward
-    switch (neuronDataResult) {
-      case (#Ok neuronData) {
-        // perform our validations
-        if (not verifyCallerOwnsNeuron(caller, neuronData.controller)) {
-          return #err("Caller does not own this neuron");
-        };
+    // initiate message 2
+    if (neuronDataResult.neuron_infos.size() == 0) {
+      return #err("No neuron info available for the given neuron ID");
+    };
 
-        if (not verifyNeuronIsStaking(neuronData.dissolve_state)) {
-          return #err("Neuron needs to be locked and hit the minimum dissolve delay threshold");
-        };
+    if (neuronDataResult.full_neurons.size() == 0) {
+      return #err("No full neuron info available. Please ensure the canister is hotkey");
+    };
 
-        if (not verifyNeuronAge(neuronData.aging_since_timestamp_seconds)) {
-          return #err("Neuron needs to hit the minimum age threshold of 2 weeks");
-        };
+    let neuronInfo = neuronDataResult.neuron_infos[0].1;
+    let neuronFullInfo = neuronDataResult.full_neurons[0];
 
-        let oldLevel = _neuronAchievementLevel.get(neuronId);
-        let newLevel = verifyNeuronAchievementLevel(neuronData.cached_neuron_stake_e8s);
-        let rewardsDue = verifyIcpRewardsDue(oldLevel, newLevel);
+    // perform our validations
+    if (not verifyCallerOwnsNeuron(caller, neuronFullInfo.controller)) {
+      return #err("Caller does not own this neuron");
+    };
 
-        if (rewardsDue <= 0) {
-          return #err("Neuron is not due any rewards");
-        };
+    if (not verifyNeuronIsStaking(neuronInfo.state, neuronInfo.dissolve_delay_seconds)) {
+      return #err("Neuron needs to be locked and hit the minimum dissolve delay threshold");
+    };
 
-        // double spend prevention
-        if (Option.isSome(_ongoingRewardTransfers.get(caller))) {
-          return #err("Reward transfer already in progress");
-        };
-        _ongoingRewardTransfers.put(caller, neuronId);
+    if (not verifyNeuronAge(neuronInfo.age_seconds)) {
+      return #err("Neuron needs to hit the minimum age threshold of 2 weeks");
+    };
 
-        let transferResult = await canisterTransferIcp(getNeuronIcpAccount(neuronData.account), (rewardsDue + ICP_PROTOCOL_FEE));
+    let oldLevel = _neuronAchievementLevel.get(neuronId);
+    let newLevel = verifyNeuronAchievementLevel(neuronInfo.stake_e8s);
+    let rewardsDue = verifyIcpRewardsDue(oldLevel, newLevel);
 
-        // initiate message 3
-        switch (transferResult) {
-          case (#Ok result) {
-            ignore _ongoingRewardTransfers.remove(caller);
+    if (rewardsDue <= 0) {
+      return #err("Neuron is not due any rewards");
+    };
 
-            _neuronAchievementLevel.put(neuronId, newLevel);
-            _TotalIcpClaimed += (rewardsDue + ICP_PROTOCOL_FEE);
-            return #ok("Reward successfully disbursed");
-          };
-          case (#Err result) {
-            ignore _ongoingRewardTransfers.remove(caller);
+    // double spend prevention
+    if (Option.isSome(_ongoingRewardTransfers.get(caller))) {
+      return #err("Reward transfer already in progress");
+    };
+    _ongoingRewardTransfers.put(caller, neuronId);
 
-            return #err("Failed to transfer rewards, please try again");
-          };
-        };
+    let transferResult = await canisterTransferIcp(getNeuronIcpAccount(neuronFullInfo.account), (rewardsDue + ICP_PROTOCOL_FEE));
+
+    // initiate message 3
+    switch (transferResult) {
+      case (#Ok result) {
+        ignore _ongoingRewardTransfers.remove(caller);
+
+        _neuronAchievementLevel.put(neuronId, newLevel);
+        _TotalIcpClaimed += (rewardsDue + ICP_PROTOCOL_FEE);
+        return #ok("Reward successfully disbursed");
       };
       case (#Err result) {
-        return #err("Please ensure the canister is added as hotkey");
+        ignore _ongoingRewardTransfers.remove(caller);
+
+        return #err("Failed to transfer rewards, please try again");
       };
     };
   };
@@ -236,12 +261,16 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
   };
 
   private func verifyNeuronAchievementLevel(neuronStake : Nat64) : AchievementLevel {
-    if (neuronStake >= LEVEL_3.icp_amount_needed) {
+    if (neuronStake >= LEVEL_5.icp_amount_needed) {
+      return LEVEL_5;
+    } else if (neuronStake >= LEVEL_4.icp_amount_needed) {
+      return LEVEL_4;
+    } else if (neuronStake >= LEVEL_3.icp_amount_needed) {
       return LEVEL_3;
     } else if (neuronStake >= LEVEL_2.icp_amount_needed) {
       return LEVEL_2;
     } else {
-      return LEVEL_1; // always atleast level 1
+      return LEVEL_1; // always at least level 1
     };
   };
 
@@ -249,15 +278,34 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
     switch (oldLevel) {
       case (?old) {
         switch ((old.level_id, newLevel.level_id)) {
+          case (4, 5) { return LEVEL_5.icp_reward };
+          case (3, 4) { return LEVEL_4.icp_reward };
           case (2, 3) { return LEVEL_3.icp_reward };
           case (1, 2) { return LEVEL_2.icp_reward };
-          case (1, 3) { return LEVEL_2.icp_reward + LEVEL_3.icp_reward }; // Direct transition from 1 to 3
-          case _ { return 0 }; // All other transitions
+          case (1, 3) { return LEVEL_2.icp_reward + LEVEL_3.icp_reward };
+          case (1, 4) {
+            return LEVEL_2.icp_reward + LEVEL_3.icp_reward + LEVEL_4.icp_reward;
+          };
+          case (1, 5) {
+            return LEVEL_2.icp_reward + LEVEL_3.icp_reward + LEVEL_4.icp_reward + LEVEL_5.icp_reward;
+          };
+          case (2, 4) { return LEVEL_3.icp_reward + LEVEL_4.icp_reward };
+          case (2, 5) {
+            return LEVEL_3.icp_reward + LEVEL_4.icp_reward + LEVEL_5.icp_reward;
+          };
+          case (3, 5) { return LEVEL_4.icp_reward + LEVEL_5.icp_reward };
+          case _ { return 0 }; // all transitions checked, reward is 0
         };
       };
       case (null) {
         // no previous level
         switch (newLevel.level_id) {
+          case 5 {
+            return LEVEL_1.icp_reward + LEVEL_2.icp_reward + LEVEL_3.icp_reward + LEVEL_4.icp_reward + LEVEL_5.icp_reward;
+          };
+          case 4 {
+            return LEVEL_1.icp_reward + LEVEL_2.icp_reward + LEVEL_3.icp_reward + LEVEL_4.icp_reward;
+          };
           case 3 {
             return LEVEL_1.icp_reward + LEVEL_2.icp_reward + LEVEL_3.icp_reward;
           };
@@ -268,36 +316,20 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
     };
   };
 
-  private func verifyNeuronIsStaking(dissolveState : ?GovernanceInterface.DissolveState) : Bool {
+  private func verifyNeuronIsStaking(neuronState : Int32, dissolveDelay : Nat64) : Bool {
     let minimumSecondsNeeded : Nat64 = 15_813_200; // minimum of 6 months
 
-    switch (dissolveState) {
-      case (? #DissolveDelaySeconds(value)) {
-        return value >= minimumSecondsNeeded;
-      };
-      case (? #WhenDissolvedTimestampSeconds(_)) {
-        return false;
-      };
-      case null {
-        return false;
-      };
+    if (neuronState == 1) { // locked
+      return dissolveDelay >= minimumSecondsNeeded;
+    } else {
+      return false;
     };
   };
 
   private func verifyNeuronAge(age : Nat64) : Bool {
-    // age can be a very large number if dissolving
-    // unlocked neurons also accumulate age
-    // see https://github.com/dfinity/ic/blob/c04abf0b0be433961d45f2daa5f1c5c12228dfdf/rs/nns/governance/src/neuron.rs#L431
-    let now = Nat64.fromNat(Int.abs(Time.now() / 1_000_000_000));
     let minimumSecondsNeeded : Nat64 = 1_209_600; // minimum of 2 weeks
 
-    if (age > now) {
-      return false;
-    } else if ((now - age) > minimumSecondsNeeded) {
-      return true;
-    } else {
-      return false;
-    };
+    return age >= minimumSecondsNeeded; // age is 0 if dissolving
   };
 
   ///////////////////////////////////
