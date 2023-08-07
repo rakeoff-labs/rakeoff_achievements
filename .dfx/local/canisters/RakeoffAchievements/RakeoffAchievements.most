@@ -1,7 +1,0 @@
-// Version: 1.0.0
-type AchievementLevel =
-  {icp_amount_needed : Nat64; icp_reward : Nat64; level_id : Nat};
-actor {
-  stable var _TotalIcpClaimed : Nat64;
-  stable var _neuronLevelStorage : [(Nat64, AchievementLevel)]
-};
