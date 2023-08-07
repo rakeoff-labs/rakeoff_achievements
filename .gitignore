@@ -11,13 +11,6 @@
 .dfx/local/
 .dfx/ic/lsp
 .dfx/canisters/idl
-.dfx/canisters/RakeoffAchievements/index.js
-.dfx/canisters/RakeoffAchievements/RakeoffAchievements.did
-.dfx/canisters/RakeoffAchievements/RakeoffAchievements.did.d.ts
-.dfx/canisters/RakeoffAchievements/RakeoffAchievements.did.js
-.dfx/canisters/RakeoffAchievements/RakeoffAchievements.most
-.dfx/canisters/RakeoffAchievements/RakeoffAchievements.old.did
-.dfx/canisters/RakeoffAchievements/RakeoffAchievements.old.most
 
 # frontend code
 node_modules/
