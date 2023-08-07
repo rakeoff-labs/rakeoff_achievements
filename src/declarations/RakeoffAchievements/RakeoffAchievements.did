@@ -1,0 +1,48 @@
+type Result_2 = 
+ variant {
+   err: text;
+   ok: NeuronAchievementDetails;
+ };
+type Result_1 = 
+ variant {
+   err: text;
+   ok: text;
+ };
+type Result = 
+ variant {
+   err: text;
+   ok: CanisterAccount;
+ };
+type RakeoffAchievements = 
+ service {
+   check_achievement_level_reward: (nat64) -> (Result_2);
+   claim_achievement_level_reward: (nat64) -> (Result_1);
+   get_canister_account_and_stats: () -> (Result);
+   show_available_levels: () -> (vec AchievementLevel) query;
+ };
+type NeuronAchievementDetails = 
+ record {
+   cached_level: opt AchievementLevel;
+   canister_rewards_available: bool;
+   current_level: AchievementLevel;
+   neuron_id: nat64;
+   neuron_passes_checks: bool;
+   reward_amount_due: nat64;
+ };
+type CanisterAccount = 
+ record {
+   icp_address: text;
+   icp_balance: nat64;
+   icp_claimed: nat64;
+   ongoing_transfers: vec record {
+                            principal;
+                            nat64;
+                          };
+ };
+type AchievementLevel = 
+ record {
+   icp_amount_needed: nat64;
+   icp_reward: nat64;
+   level_id: nat;
+ };
+service : () -> RakeoffAchievements
