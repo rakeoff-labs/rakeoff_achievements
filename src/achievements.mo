@@ -90,7 +90,6 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
     cached_level : ?AchievementLevel; // checks the canister state
     neuron_passes_checks : Bool;
     reward_amount_due : Nat64;
-    canister_rewards_available : Bool;
   };
 
   //////////////////////
@@ -139,6 +138,11 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
     return await checkAcheivementLevelReward(neuronId);
   };
 
+  public shared ({ caller }) func check_rewards_available(neuronId : Nat64) : async Result.Result<Bool, Text> {
+    assert (Principal.isAnonymous(caller) == false);
+    return await checkRewardsAvailable(neuronId);
+  };
+
   public shared ({ caller }) func claim_achievement_level_reward(neuronId : Nat64) : async Result.Result<Text, Text> {
     assert (Principal.isAnonymous(caller) == false);
     return await claimAchievementLevelReward(caller, neuronId);
@@ -154,7 +158,6 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
   ////////////////////////////////////
 
   private func checkAcheivementLevelReward(neuronId : Nat64) : async Result.Result<NeuronAchievementDetails, Text> {
-    let canisterIcpBalance = await getCanisterIcpBalance();
     let neuronDataResult = await Governance.list_neurons({
       neuron_ids = [neuronId];
       include_neurons_readable_by_caller = false;
@@ -176,8 +179,27 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
       cached_level = oldLevel;
       neuron_passes_checks = verifyNeuronAge(neuronInfo.age_seconds) and verifyNeuronIsStaking(neuronInfo.state, neuronInfo.dissolve_delay_seconds);
       reward_amount_due = rewardsDue;
-      canister_rewards_available = canisterIcpBalance > (rewardsDue + ICP_PROTOCOL_FEE);
     });
+  };
+
+  private func checkRewardsAvailable(neuronId : Nat64) : async Result.Result<Bool, Text> {
+    let canisterIcpBalance = await getCanisterIcpBalance();
+    let neuronDataResult = await Governance.list_neurons({
+      neuron_ids = [neuronId];
+      include_neurons_readable_by_caller = false;
+    });
+
+    if (neuronDataResult.neuron_infos.size() == 0) {
+      return #err("No neuron info available for the given neuron ID");
+    };
+
+    let neuronInfo = neuronDataResult.neuron_infos[0].1;
+
+    let oldLevel = _neuronAchievementLevel.get(neuronId);
+    let newLevel = verifyNeuronAchievementLevel(neuronInfo.stake_e8s);
+    let rewardsDue = verifyIcpRewardsDue(oldLevel, newLevel);
+
+    return #ok(canisterIcpBalance > (rewardsDue + ICP_PROTOCOL_FEE));
   };
 
   private func claimAchievementLevelReward(caller : Principal, neuronId : Nat64) : async Result.Result<Text, Text> {
@@ -319,7 +341,8 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
   private func verifyNeuronIsStaking(neuronState : Int32, dissolveDelay : Nat64) : Bool {
     let minimumSecondsNeeded : Nat64 = 15_813_200; // minimum of 6 months
 
-    if (neuronState == 1) { // locked
+    if (neuronState == 1) {
+      // locked
       return dissolveDelay >= minimumSecondsNeeded;
     } else {
       return false;
