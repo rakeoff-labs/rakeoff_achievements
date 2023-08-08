@@ -20,7 +20,10 @@ export interface NeuronAchievementDetails {
   'neuron_id' : bigint,
 }
 export interface RakeoffAchievements {
-  'check_achievement_level_reward' : ActorMethod<[bigint], Result_3>,
+  'check_achievement_level_reward' : ActorMethod<
+    [bigint, bigint, bigint, number, bigint],
+    Result_3
+  >,
   'check_rewards_available' : ActorMethod<[bigint], Result_2>,
   'claim_achievement_level_reward' : ActorMethod<[bigint], Result_1>,
   'get_canister_account_and_stats' : ActorMethod<[], Result>,

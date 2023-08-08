@@ -25,7 +25,11 @@ export const idlFactory = ({ IDL }) => {
   });
   const Result = IDL.Variant({ 'ok' : CanisterAccount, 'err' : IDL.Text });
   const RakeoffAchievements = IDL.Service({
-    'check_achievement_level_reward' : IDL.Func([IDL.Nat64], [Result_3], []),
+    'check_achievement_level_reward' : IDL.Func(
+        [IDL.Nat64, IDL.Nat64, IDL.Nat64, IDL.Int32, IDL.Nat64],
+        [Result_3],
+        ['query'],
+      ),
     'check_rewards_available' : IDL.Func([IDL.Nat64], [Result_2], []),
     'claim_achievement_level_reward' : IDL.Func([IDL.Nat64], [Result_1], []),
     'get_canister_account_and_stats' : IDL.Func([], [Result], []),
