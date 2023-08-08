@@ -20,12 +20,19 @@ type Result =
  };
 type RakeoffAchievements = 
  service {
-   check_achievement_level_reward: (nat64, nat64, nat64, int32, nat64) ->
-    (Result_3) query;
+   check_achievement_level_reward: (NeuronCheckArgs) -> (Result_3) query;
    check_rewards_available: (nat64) -> (Result_2);
    claim_achievement_level_reward: (nat64) -> (Result_1);
    get_canister_account_and_stats: () -> (Result);
    show_available_levels: () -> (vec AchievementLevel) query;
+ };
+type NeuronCheckArgs = 
+ record {
+   age_seconds: nat64;
+   dissolve_delay_seconds: nat64;
+   neuronId: nat64;
+   stake_e8s: nat64;
+   state: int32;
  };
 type NeuronAchievementDetails = 
  record {

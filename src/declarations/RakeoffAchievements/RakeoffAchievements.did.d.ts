@@ -19,11 +19,15 @@ export interface NeuronAchievementDetails {
   'reward_amount_due' : bigint,
   'neuron_id' : bigint,
 }
+export interface NeuronCheckArgs {
+  'dissolve_delay_seconds' : bigint,
+  'state' : number,
+  'stake_e8s' : bigint,
+  'neuronId' : bigint,
+  'age_seconds' : bigint,
+}
 export interface RakeoffAchievements {
-  'check_achievement_level_reward' : ActorMethod<
-    [bigint, bigint, bigint, number, bigint],
-    Result_3
-  >,
+  'check_achievement_level_reward' : ActorMethod<[NeuronCheckArgs], Result_3>,
   'check_rewards_available' : ActorMethod<[bigint], Result_2>,
   'claim_achievement_level_reward' : ActorMethod<[bigint], Result_1>,
   'get_canister_account_and_stats' : ActorMethod<[], Result>,

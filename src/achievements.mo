@@ -92,6 +92,14 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
     reward_amount_due : Nat64;
   };
 
+  public type NeuronCheckArgs = {
+    neuronId : Nat64;
+    stake_e8s : Nat64;
+    age_seconds : Nat64;
+    state : Int32;
+    dissolve_delay_seconds : Nat64;
+  };
+
   //////////////////////
   // Canister State ////
   //////////////////////
@@ -133,9 +141,9 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
     return await getCanisterAccount(caller);
   };
 
-  public shared query ({ caller }) func check_achievement_level_reward(neuronId : Nat64, stake_e8s : Nat64, age_seconds : Nat64, state : Int32, dissolve_delay_seconds : Nat64) : async Result.Result<NeuronAchievementDetails, Text> {
+  public shared query ({ caller }) func check_achievement_level_reward(neuronCheckArgs : NeuronCheckArgs) : async Result.Result<NeuronAchievementDetails, Text> {
     assert (Principal.isAnonymous(caller) == false);
-    return checkAcheivementLevelReward(neuronId, stake_e8s, age_seconds, state, dissolve_delay_seconds);
+    return checkAcheivementLevelReward(neuronCheckArgs);
   };
 
   public shared ({ caller }) func check_rewards_available(neuronId : Nat64) : async Result.Result<Bool, Text> {
@@ -158,16 +166,16 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
   ////////////////////////////////////
 
   // A query call function to quickly check a neurons achievement level - you must know the details of the neuron submitted
-  private func checkAcheivementLevelReward(neuronId : Nat64, stake_e8s : Nat64, age_seconds : Nat64, state : Int32, dissolve_delay_seconds : Nat64) : Result.Result<NeuronAchievementDetails, Text> {
-    let oldLevel = _neuronAchievementLevel.get(neuronId);
-    let newLevel = verifyNeuronAchievementLevel(stake_e8s);
+  private func checkAcheivementLevelReward(neuronCheckArgs : NeuronCheckArgs) : Result.Result<NeuronAchievementDetails, Text> {
+    let oldLevel = _neuronAchievementLevel.get(neuronCheckArgs.neuronId);
+    let newLevel = verifyNeuronAchievementLevel(neuronCheckArgs.stake_e8s);
     let rewardsDue = verifyIcpRewardsDue(oldLevel, newLevel);
 
     return #ok({
-      neuron_id = neuronId;
+      neuron_id = neuronCheckArgs.neuronId;
       current_level = newLevel;
       cached_level = oldLevel;
-      neuron_passes_checks = verifyNeuronAge(age_seconds) and verifyNeuronIsStaking(state, dissolve_delay_seconds);
+      neuron_passes_checks = verifyNeuronAge(neuronCheckArgs.age_seconds) and verifyNeuronIsStaking(neuronCheckArgs.state, neuronCheckArgs.dissolve_delay_seconds);
       reward_amount_due = rewardsDue;
     });
   };

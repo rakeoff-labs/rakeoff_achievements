@@ -1,4 +1,11 @@
 export const idlFactory = ({ IDL }) => {
+  const NeuronCheckArgs = IDL.Record({
+    'dissolve_delay_seconds' : IDL.Nat64,
+    'state' : IDL.Int32,
+    'stake_e8s' : IDL.Nat64,
+    'neuronId' : IDL.Nat64,
+    'age_seconds' : IDL.Nat64,
+  });
   const AchievementLevel = IDL.Record({
     'level_id' : IDL.Nat,
     'icp_amount_needed' : IDL.Nat64,
@@ -26,7 +33,7 @@ export const idlFactory = ({ IDL }) => {
   const Result = IDL.Variant({ 'ok' : CanisterAccount, 'err' : IDL.Text });
   const RakeoffAchievements = IDL.Service({
     'check_achievement_level_reward' : IDL.Func(
-        [IDL.Nat64, IDL.Nat64, IDL.Nat64, IDL.Int32, IDL.Nat64],
+        [NeuronCheckArgs],
         [Result_3],
         ['query'],
       ),

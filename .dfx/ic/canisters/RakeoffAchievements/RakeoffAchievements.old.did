@@ -43,7 +43,8 @@ type AchievementLevel =
    level_id: nat;
  };
 service : {
-  check_achievement_level_reward: (nat64) -> (Result_3);
+  check_achievement_level_reward: (nat64, nat64, nat64, int32, nat64) ->
+   (Result_3) query;
   check_rewards_available: (nat64) -> (Result_2);
   claim_achievement_level_reward: (nat64) -> (Result_1);
   get_canister_account_and_stats: () -> (Result);
