@@ -1,12 +1,7 @@
-type Result_3 = 
- variant {
-   err: text;
-   ok: NeuronAchievementDetails;
- };
 type Result_2 = 
  variant {
    err: text;
-   ok: bool;
+   ok: NeuronAchievementDetails;
  };
 type Result_1 = 
  variant {
@@ -20,8 +15,7 @@ type Result =
  };
 type RakeoffAchievements = 
  service {
-   check_achievement_level_reward: (NeuronCheckArgs) -> (Result_3) query;
-   check_rewards_available: (nat64) -> (Result_2);
+   check_achievement_level_reward: (NeuronCheckArgs) -> (Result_2) query;
    claim_achievement_level_reward: (nat64) -> (Result_1);
    get_canister_account_and_stats: () -> (Result);
    show_available_levels: () -> (vec AchievementLevel) query;
@@ -51,6 +45,7 @@ type CanisterAccount =
                             principal;
                             nat64;
                           };
+   total_neurons_added: nat;
  };
 type AchievementLevel = 
  record {

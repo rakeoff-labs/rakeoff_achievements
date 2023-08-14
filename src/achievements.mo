@@ -82,6 +82,7 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
     icp_balance : Nat64;
     icp_claimed : Nat64;
     ongoing_transfers : [(Principal, Nat64)];
+    total_neurons_added: Nat;
   };
 
   public type NeuronAchievementDetails = {
@@ -146,11 +147,6 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
     return checkAcheivementLevelReward(neuronCheckArgs);
   };
 
-  public shared ({ caller }) func check_rewards_available(neuronId : Nat64) : async Result.Result<Bool, Text> {
-    assert (Principal.isAnonymous(caller) == false);
-    return await checkRewardsAvailable(neuronId);
-  };
-
   public shared ({ caller }) func claim_achievement_level_reward(neuronId : Nat64) : async Result.Result<Text, Text> {
     assert (Principal.isAnonymous(caller) == false);
     return await claimAchievementLevelReward(caller, neuronId);
@@ -178,26 +174,6 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
       neuron_passes_checks = verifyNeuronAge(neuronCheckArgs.age_seconds) and verifyNeuronIsStaking(neuronCheckArgs.state, neuronCheckArgs.dissolve_delay_seconds);
       reward_amount_due = rewardsDue;
     });
-  };
-
-  private func checkRewardsAvailable(neuronId : Nat64) : async Result.Result<Bool, Text> {
-    let canisterIcpBalance = await getCanisterIcpBalance();
-    let neuronDataResult = await Governance.list_neurons({
-      neuron_ids = [neuronId];
-      include_neurons_readable_by_caller = false;
-    });
-
-    if (neuronDataResult.neuron_infos.size() == 0) {
-      return #err("No neuron info available for the given neuron ID");
-    };
-
-    let neuronInfo = neuronDataResult.neuron_infos[0].1;
-
-    let oldLevel = _neuronAchievementLevel.get(neuronId);
-    let newLevel = verifyNeuronAchievementLevel(neuronInfo.stake_e8s);
-    let rewardsDue = verifyIcpRewardsDue(oldLevel, newLevel);
-
-    return #ok(canisterIcpBalance > (rewardsDue + ICP_PROTOCOL_FEE));
   };
 
   private func claimAchievementLevelReward(caller : Principal, neuronId : Nat64) : async Result.Result<Text, Text> {
@@ -387,6 +363,7 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
       icp_balance = canisterIcpBalance;
       icp_claimed = _TotalIcpClaimed;
       ongoing_transfers = Iter.toArray<(Principal, Nat64)>(_ongoingRewardTransfers.entries());
+      total_neurons_added = _neuronAchievementLevel.size();
     });
   };
 

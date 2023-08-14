@@ -18,26 +18,25 @@ export const idlFactory = ({ IDL }) => {
     'reward_amount_due' : IDL.Nat64,
     'neuron_id' : IDL.Nat64,
   });
-  const Result_3 = IDL.Variant({
+  const Result_2 = IDL.Variant({
     'ok' : NeuronAchievementDetails,
     'err' : IDL.Text,
   });
-  const Result_2 = IDL.Variant({ 'ok' : IDL.Bool, 'err' : IDL.Text });
   const Result_1 = IDL.Variant({ 'ok' : IDL.Text, 'err' : IDL.Text });
   const CanisterAccount = IDL.Record({
     'ongoing_transfers' : IDL.Vec(IDL.Tuple(IDL.Principal, IDL.Nat64)),
     'icp_claimed' : IDL.Nat64,
     'icp_address' : IDL.Text,
+    'total_neurons_added' : IDL.Nat,
     'icp_balance' : IDL.Nat64,
   });
   const Result = IDL.Variant({ 'ok' : CanisterAccount, 'err' : IDL.Text });
   const RakeoffAchievements = IDL.Service({
     'check_achievement_level_reward' : IDL.Func(
         [NeuronCheckArgs],
-        [Result_3],
+        [Result_2],
         ['query'],
       ),
-    'check_rewards_available' : IDL.Func([IDL.Nat64], [Result_2], []),
     'claim_achievement_level_reward' : IDL.Func([IDL.Nat64], [Result_1], []),
     'get_canister_account_and_stats' : IDL.Func([], [Result], []),
     'show_available_levels' : IDL.Func(

@@ -10,6 +10,7 @@ export interface CanisterAccount {
   'ongoing_transfers' : Array<[Principal, bigint]>,
   'icp_claimed' : bigint,
   'icp_address' : string,
+  'total_neurons_added' : bigint,
   'icp_balance' : bigint,
 }
 export interface NeuronAchievementDetails {
@@ -27,8 +28,7 @@ export interface NeuronCheckArgs {
   'age_seconds' : bigint,
 }
 export interface RakeoffAchievements {
-  'check_achievement_level_reward' : ActorMethod<[NeuronCheckArgs], Result_3>,
-  'check_rewards_available' : ActorMethod<[bigint], Result_2>,
+  'check_achievement_level_reward' : ActorMethod<[NeuronCheckArgs], Result_2>,
   'claim_achievement_level_reward' : ActorMethod<[bigint], Result_1>,
   'get_canister_account_and_stats' : ActorMethod<[], Result>,
   'show_available_levels' : ActorMethod<[], Array<AchievementLevel>>,
@@ -37,8 +37,6 @@ export type Result = { 'ok' : CanisterAccount } |
   { 'err' : string };
 export type Result_1 = { 'ok' : string } |
   { 'err' : string };
-export type Result_2 = { 'ok' : boolean } |
-  { 'err' : string };
-export type Result_3 = { 'ok' : NeuronAchievementDetails } |
+export type Result_2 = { 'ok' : NeuronAchievementDetails } |
   { 'err' : string };
 export interface _SERVICE extends RakeoffAchievements {}
