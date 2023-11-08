@@ -1,17 +1,29 @@
-type Result_2 = 
+type Result_3 = 
  variant {
    err: text;
    ok: NeuronAchievementDetails;
  };
-type Result_1 = 
+type Result_2 = 
  variant {
    err: text;
    ok: text;
  };
-type Result = 
+type Result_1 = 
  variant {
    err: text;
    ok: CanisterAccount;
+ };
+type Result = 
+ variant {
+   err: text;
+   ok: CanisterStats;
+ };
+type NeuronCheckResults = 
+ record {
+   is_locked_for_6_months: bool;
+   is_staking: bool;
+   new_achievement_reward_due: bool;
+   two_weeks_old: bool;
  };
 type NeuronCheckArgs = 
  record {
@@ -25,23 +37,24 @@ type NeuronAchievementDetails =
  record {
    cached_level: opt AchievementLevel;
    current_level: AchievementLevel;
+   neuron_checks: NeuronCheckResults;
    neuron_id: nat64;
    neuron_passes_checks: bool;
    reward_amount_due: nat64;
+ };
+type CanisterStats = 
+ record {
+   icp_claimed: nat64;
+   ongoing_transfers: vec record {
+                            principal;
+                            nat64;
+                          };
+   total_neurons_added: nat;
  };
 type CanisterAccount = 
  record {
    icp_address: text;
    icp_balance: nat64;
-   icp_claimed: nat64;
-   neurons_added: vec record {
-                        nat64;
-                        AchievementLevel;
-                      };
-   ongoing_transfers: vec record {
-                            principal;
-                            nat64;
-                          };
  };
 type AchievementLevel = 
  record {
@@ -50,8 +63,9 @@ type AchievementLevel =
    level_id: nat;
  };
 service : {
-  check_achievement_level_reward: (NeuronCheckArgs) -> (Result_2) query;
-  claim_achievement_level_reward: (nat64) -> (Result_1);
-  get_canister_account_and_stats: () -> (Result);
+  check_achievement_level_reward: (NeuronCheckArgs) -> (Result_3) query;
+  claim_achievement_level_reward: (nat64) -> (Result_2);
+  get_canister_account: () -> (Result_1);
+  get_canister_stats: () -> (Result) query;
   show_available_levels: () -> (vec AchievementLevel) query;
 }

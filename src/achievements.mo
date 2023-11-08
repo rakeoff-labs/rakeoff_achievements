@@ -80,9 +80,19 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
   public type CanisterAccount = {
     icp_address : Text;
     icp_balance : Nat64;
+  };
+
+  public type CanisterStats = {
     icp_claimed : Nat64;
     ongoing_transfers : [(Principal, Nat64)];
-    total_neurons_added: Nat;
+    total_neurons_added : Nat;
+  };
+
+  public type NeuronCheckResults = {
+    two_weeks_old : Bool;
+    is_staking : Bool;
+    is_locked_for_6_months : Bool;
+    new_achievement_reward_due : Bool;
   };
 
   public type NeuronAchievementDetails = {
@@ -90,6 +100,7 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
     current_level : AchievementLevel;
     cached_level : ?AchievementLevel; // checks the canister state
     neuron_passes_checks : Bool;
+    neuron_checks : NeuronCheckResults;
     reward_amount_due : Nat64;
   };
 
@@ -137,9 +148,13 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
   // Public Functions ////
   ////////////////////////
 
-  public shared ({ caller }) func get_canister_account_and_stats() : async Result.Result<CanisterAccount, Text> {
+  public shared ({ caller }) func get_canister_account() : async Result.Result<CanisterAccount, Text> {
     assert (caller == owner);
     return await getCanisterAccount(caller);
+  };
+
+  public query func get_canister_stats() : async Result.Result<CanisterStats, Text> {
+    return getCanisterStats();
   };
 
   public shared query ({ caller }) func check_achievement_level_reward(neuronCheckArgs : NeuronCheckArgs) : async Result.Result<NeuronAchievementDetails, Text> {
@@ -165,14 +180,19 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
   private func checkAcheivementLevelReward(neuronCheckArgs : NeuronCheckArgs) : Result.Result<NeuronAchievementDetails, Text> {
     let oldLevel = _neuronAchievementLevel.get(neuronCheckArgs.neuronId);
     let newLevel = verifyNeuronAchievementLevel(neuronCheckArgs.stake_e8s);
-    let rewardsDue = verifyIcpRewardsDue(oldLevel, newLevel);
 
     return #ok({
       neuron_id = neuronCheckArgs.neuronId;
       current_level = newLevel;
       cached_level = oldLevel;
-      neuron_passes_checks = verifyNeuronAge(neuronCheckArgs.age_seconds) and verifyNeuronIsStaking(neuronCheckArgs.state, neuronCheckArgs.dissolve_delay_seconds);
-      reward_amount_due = rewardsDue;
+      neuron_passes_checks = verifyNeuronAge(neuronCheckArgs.age_seconds) and verifyNeuronIsStaking(neuronCheckArgs.state, neuronCheckArgs.dissolve_delay_seconds) and (verifyIcpRewardsDue(oldLevel, newLevel) > 0);
+      neuron_checks = {
+        two_weeks_old = verifyNeuronAge(neuronCheckArgs.age_seconds);
+        is_staking = neuronCheckArgs.state == 1;
+        is_locked_for_6_months = verifyNeuronIsStaking(neuronCheckArgs.state, neuronCheckArgs.dissolve_delay_seconds);
+        new_achievement_reward_due = (verifyIcpRewardsDue(oldLevel, newLevel) > 0);
+      };
+      reward_amount_due = verifyIcpRewardsDue(oldLevel, newLevel);
     });
   };
 
@@ -333,6 +353,23 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
   // Private ICP wallet Functions ///
   ///////////////////////////////////
 
+  private func getCanisterAccount(caller : Principal) : async Result.Result<CanisterAccount, Text> {
+    let canisterIcpBalance = await getCanisterIcpBalance();
+
+    return #ok({
+      icp_address = Hex.encode(getCanisterIcpAddress());
+      icp_balance = canisterIcpBalance;
+    });
+  };
+
+  private func getCanisterStats() : Result.Result<CanisterStats, Text> {
+    return #ok({
+      icp_claimed = _TotalIcpClaimed;
+      ongoing_transfers = Iter.toArray<(Principal, Nat64)>(_ongoingRewardTransfers.entries());
+      total_neurons_added = _neuronAchievementLevel.size();
+    });
+  };
+
   private func getCanisterIcpAddress() : [Nat8] {
     let ownerAccount = Principal.fromActor(thisCanister);
     let subAccount = IcpAccountTools.defaultSubaccount();
@@ -353,18 +390,6 @@ shared ({ caller = owner }) actor class RakeoffAchievements() = thisCanister {
     });
 
     return balance.e8s;
-  };
-
-  private func getCanisterAccount(caller : Principal) : async Result.Result<CanisterAccount, Text> {
-    let canisterIcpBalance = await getCanisterIcpBalance();
-
-    return #ok({
-      icp_address = Hex.encode(getCanisterIcpAddress());
-      icp_balance = canisterIcpBalance;
-      icp_claimed = _TotalIcpClaimed;
-      ongoing_transfers = Iter.toArray<(Principal, Nat64)>(_ongoingRewardTransfers.entries());
-      total_neurons_added = _neuronAchievementLevel.size();
-    });
   };
 
   private func canisterTransferIcp(transfer_to : [Nat8], transfer_amount : Nat64) : async IcpLedgerInterface.TransferResult {
